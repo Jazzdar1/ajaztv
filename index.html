@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fixed Player with Scrolling Channels</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+    <style>
+        body {
+            background-color: #111;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        #hls-player-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            width: 100%;
+            height: 300px;
+            background-color: #000;
+            z-index: 1000;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+        }
+        #content {
+            margin-top: 310px; /* Adjust to ensure the content appears below the fixed player */
+            padding: 20px;
+        }
+        #playlist-controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #playlist-dropdown, #load-playlist, #playlist-input {
+            margin: 10px;
+            padding: 10px;
+            font-size: 16px;
+        }
+        #channels {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 15px;
+        }
+        .channel {
+            background-color: #222;
+            border-radius: 10px;
+            padding: 10px;
+            width: 150px;
+            cursor: pointer;
+            text-align: center;
+            transition: transform 0.2s;
+        }
+        .channel:hover {
+            transform: scale(1.1);
+        }
+        .channel img {
+            width: 100%;
+            height: 80px;
+            object-fit: contain;
+            border-radius: 5px;
+        }
+        .channel-name {
+            margin-top: 10px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="hls-player-container">
+        <video id="hls-player" controls></video>
+    </div>
+
+    <div id="content">
+        <div id="playlist-controls">
+            <select id="playlist-dropdown">
+                <option value="">Select a Playlist</option>
+            </select>
+            <input type="text" id="playlist-input" placeholder="Paste custom playlist URL">
+            <button id="load-playlist">Load Playlist</button>
+        </div>
+        <div id="error-message" style="color: red; display: none;">Error loading playlist. Please try again.</div>
+        <div id="channels"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const videoPlayer = document.getElementById('hls-player');
+            const channelList = document.getElementById('channels');
+            const playlistInput = document.getElementById('playlist-input');
+            const loadPlaylistButton = document.getElementById('load-playlist');
+            const playlistDropdown = document.getElementById('playlist-dropdown');
+            const errorMessage = document.getElementById('error-message');
+            let hls;
+            let channelData = [];
+
+            // Predefined playlists
+            const predefinedPlaylists = [
+                { name: 'Pakistan Channels', url: 'https://iptv-org.github.io/iptv/countries/pk.m3u' },
+                { name: 'Country Index', url: 'https://iptv-org.github.io/iptv/index.country.m3u' },
+                { name: 'Afghanistan Channels', url: 'https://iptv-org.github.io/iptv/countries/af.m3u' },
+                { name: 'Albania Channels', url: 'https://iptv-org.github.io/iptv/countries/al.m3u' },
+                { name: 'Arabic Channels', url: 'https://iptv-org.github.io/iptv/languages/ara.m3u' },
+                { name: 'English Channels', url: 'https://iptv-org.github.io/iptv/languages/eng.m3u' },
+                { name: 'Hindi Channels', url: 'https://iptv-org.github.io/iptv/languages/hin.m3u' },
+                { name: 'Sony Channels', url: 'https://raw.githubusercontent.com/SArun61/IPTV/refs/heads/main/SonyLiv.m3u' },
+                          { name: 'Tata Sky Channels', url: 'https://raw.githubusercontent.com/SArun61/IPTV/refs/heads/main/Jio.m3u' },
+                          ];
+                          
+            // Populate playlist dropdown
+            predefinedPlaylists.forEach(playlist => {
+                const option = document.createElement('option');
+                option.value = playlist.url;
+                option.textContent = playlist.name;
+                playlistDropdown.appendChild(option);
+            });
+
+            // Initialize HLS.js
+            function initHls(streamUrl) {
+                if (hls) {
+                    hls.destroy();
+                }
+                hls = new Hls();
+                hls.loadSource(streamUrl);
+                hls.attachMedia(videoPlayer);
+                hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                    videoPlayer.play();
+                });
+                hls.on(Hls.Events.ERROR, function (event, data) {
+                    console.error('HLS.js error:', data);
+                    errorMessage.style.display = 'block';
+                });
+            }
+
+            // Parse M3U playlist
+            async function parseM3U(playlistUrl) {
+                try {
+                    const response = await fetch(playlistUrl);
+                    const text = await response.text();
+                    const lines = text.split('\n');
+                    channelData = [];
+
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].startsWith('#EXTINF')) {
+                            const channelName = lines[i].split(',')[1]?.trim();
+                            const logoMatch = lines[i].match(/tvg-logo="([^"]+)"/);
+                            const logoUrl = logoMatch ? logoMatch[1] : 'https://via.placeholder.com/150x80?text=No+Logo';
+                            const channelUrl = lines[i + 1]?.trim();
+
+                            if (channelUrl) {
+                                channelData.push({ name: channelName, logo: logoUrl, url: channelUrl });
+                            }
+                        }
+                    }
+                    renderChannels();
+                    errorMessage.style.display = 'none';
+                } catch (error) {
+                    console.error('Error loading playlist:', error);
+                    errorMessage.style.display = 'block';
+                }
+            }
+
+            // Render channels in the grid
+            function renderChannels() {
+                channelList.innerHTML = '';
+                channelData.forEach((channel, index) => {
+                    const channelDiv = document.createElement('div');
+                    channelDiv.classList.add('channel');
+                    channelDiv.dataset.index = index;
+
+                    const channelImg = document.createElement('img');
+                    channelImg.src = channel.logo;
+
+                    const channelNameDiv = document.createElement('div');
+                    channelNameDiv.classList.add('channel-name');
+                    channelNameDiv.textContent = channel.name;
+
+                    channelDiv.appendChild(channelImg);
+                    channelDiv.appendChild(channelNameDiv);
+
+                    channelDiv.addEventListener('click', () => {
+                        playChannel(index);
+                    });
+
+                    channelList.appendChild(channelDiv);
+                });
+            }
+
+            // Play a channel by index
+            function playChannel(index) {
+                const channel = channelData[index];
+                if (channel) {
+                    initHls(channel.url);
+                }
+            }
+
+            // Event listeners
+            loadPlaylistButton.addEventListener('click', () => {
+                const customUrl = playlistInput.value.trim();
+                if (customUrl) parseM3U(customUrl);
+            });
+
+            playlistDropdown.addEventListener('change', (e) => {
+                const selectedUrl = e.target.value;
+                if (selectedUrl) parseM3U(selectedUrl);
+            });
+
+            // Load default playlist (Pakistan Channels)
+            parseM3U(predefinedPlaylists[0].url);
+        });
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kashmir Cab Service</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            text-align: center;
+            padding: 20px;
+        }
+        #welcome-message {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-top: 20px;
+        }
+        #clock-container {
+            margin-top: 20px;
+            display: inline-block;
+            padding: 20px 40px;
+            border-radius: 15px;
+            background-color: white;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
+            transition: background-color 0.5s ease, color 0.5s ease;
+        }
+        #clock {
+            font-size: 2.5rem;
+            font-weight: bold;
+            text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+            letter-spacing: 2px;
+            margin: 10px 0;
+        }
+        #date {
+            font-size: 1.5rem;
+            margin-top: 5px;
+        }
+        .color-buttons {
+            margin-top: 20px;
+        }
+        .color-button {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 1rem;
+            font-weight: bold;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .color-button:hover {
+            transform: scale(1.1);
+            box-shadow: 0px 4px 15px rgba(0, 0, 0, 0.3);
+        }
+        .red { background: #ff5722; }
+        .blue { background: #2196f3; }
+        .green { background: #4caf50; }
+        .purple { background: #9c27b0; }
+        .black { background: #333; }
+    </style>
+</head>
+<body>
+    <h1 id="page-title">Welcome to Kashmi Cab Service</h1>
+    <div id="welcome-message"></div>
+    <div id="clock-container">
+        <div id="date"></div>
+        <div id="clock"></div>
+    </div>
+    <div class="color-buttons">
+        <button class="color-button red" data-color="red" data-bg="#ffcccc">Red</button>
+        <button class="color-button blue" data-color="blue" data-bg="#cceeff">Blue</button>
+        <button class="color-button green" data-color="green" data-bg="#ccffcc">Green</button>
+        <button class="color-button purple" data-color="purple" data-bg="#e6ccff">Purple</button>
+        <button class="color-button black" data-color="black" data-bg="#333333">Black</button>
+    </div>
+    <div class="language-buttons">
+        <button class="language-button" data-lang="en">English</button>
+        <button class="language-button" data-lang="hi">?????</button>
+        <button class="language-button" data-lang="ur">????</button>
+    </div>
+
+    <script>
+        // Function to get the dynamic welcome message in different languages
+        function getWelcomeMessage(language) {
+            const currentHour = new Date().getHours();
+            let message = '';
+            if (language === 'en') {
+                if (currentHour >= 5 && currentHour < 12) {
+                    message = 'Good Morning! ??';
+                } else if (currentHour >= 12 && currentHour < 17) {
+                    message = 'Good Afternoon! ??';
+                } else if (currentHour >= 17 && currentHour < 21) {
+                    message = 'Good Evening! ??';
+                } else {
+                    message = 'Good Night! ??';
+                }
+            } else if (language === 'hi') {
+                if (currentHour >= 5 && currentHour < 12) {
+                    message = '????????! ??';
+                } else if (currentHour >= 12 && currentHour < 17) {
+                    message = '??? ???????! ??';
+                } else if (currentHour >= 17 && currentHour < 21) {
+                    message = '??? ??????! ??';
+                } else {
+                    message = '??? ??????! ??';
+                }
+            } else if (language === 'ur') {
+                if (currentHour >= 5 && currentHour < 12) {
+                    message = '??? ????! ??';
+                } else if (currentHour >= 12 && currentHour < 17) {
+                    message = '????? ????! ??';
+                } else if (currentHour >= 17 && currentHour < 21) {
+                    message = '??? ????! ??';
+                } else {
+                    message = '?? ????! ??';
+                }
+            }
+            return message;
+        }
+
+        // Function to update and display the digital clock and date
+        function updateClockAndDate(language) {
+            const now = new Date();
+
+            // Format time
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            const timeString = `${hours}:${minutes}:${seconds}`;
+            
+            // Format date and day
+            const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+            const dateString = now.toLocaleDateString(language === 'hi' ? 'hi-IN' : language === 'ur' ? 'ur-PK' : 'en-US', options);
+
+            // Display time and date
+            document.getElementById('clock').textContent = timeString;
+            document.getElementById('date').textContent = dateString;
+        }
+
+        // Function to change the clock color and container background
+        function changeClockColorAndBackground(color, bgColor) {
+            const clockElement = document.getElementById('clock');
+            const clockContainer = document.getElementById('clock-container');
+            clockElement.style.color = color;
+            clockContainer.style.backgroundColor = bgColor;
+            clockElement.style.textShadow = `0 0 10px ${color}, 0 0 20px ${color}`;
+        }
+
+        // Event listeners for color buttons
+        const colorButtons = document.querySelectorAll('.color-button');
+        colorButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                const color = button.dataset.color;
+                const bgColor = button.dataset.bg;
+                changeClockColorAndBackground(color, bgColor);
+            });
+        });
+
+        // Event listeners for language buttons
+        const languageButtons = document.querySelectorAll('.language-button');
+        languageButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                // Remove active class from all buttons
+                languageButtons.forEach(btn => btn.classList.remove('active'));
+
+                // Add active class to the clicked button
+                button.classList.add('active');
+
+                // Update language
+                const language = button.dataset.lang;
+                welcomeMessageElement.textContent = getWelcomeMessage(language);
+                updateClockAndDate(language);
+            });
+        });
+
+        // Display initial welcome message and clock
+        const welcomeMessageElement = document.getElementById('welcome-message');
+        const initialLanguage = 'en'; // Default language
+        welcomeMessageElement.textContent = getWelcomeMessage(initialLanguage);
+        updateClockAndDate(initialLanguage); // Set initial time and date
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weather Forecast Ticker</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+    }
+    .weather-ticker {
+      background-color: #333;
+      color: white;
+      padding: 10px 0;
+      overflow: hidden;
+      position: relative;
+    }
+    .weather-ticker-content {
+      display: inline-block;
+      white-space: nowrap;
+      animation: scroll 30s linear infinite;
+    }
+    .weather-item {
+      margin-right: 50px;
+      display: inline-flex;
+      align-items: center;
+      padding: 150px;
+      border-radius: 5px;
+      color: white;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      position: relative;
+    }
+    .weather-item:hover {
+      transform: scale(1.1);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    }
+    .weather-item img {
+      width: 40px;
+      height: 40px;
+      margin-right: 10px;
+    }
+    .popup {
+      display: none;
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: rgba(255, 255, 255, 0.8); /* Transparent white */
+      color: #333;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      font-size: 14px;
+      z-index: 10; /* Ensure the popup is on top */
+      text-align: left;
+      width: 250px;
+      max-width: 300px;
+    }
+    .weather-item:hover .popup {
+      display: block;
+    }
+    @keyframes scroll {
+      0% {
+        transform: translateX(100%);
+      }
+      100% {
+        transform: translateX(-100%);
+      }
+    }
+    .weather-ticker-content:hover {
+      animation-play-state: paused;
+    }
+  </style>
+</head>
+<body>
+  <div class="weather-ticker">
+    <div id="weather-ticker-content" class="weather-ticker-content">
+      <!-- Weather data will be dynamically added here -->
+    </div>
+  </div>
+
+  <script>
+    const districts = [
+      { name: "Baramulla", lat: 34.2, lon: 74.36 },
+      { name: "Anantnag", lat: 33.73, lon: 75.15 },
+      { name: "Kulgam", lat: 33.64, lon: 75.02 },
+      { name: "Budgam", lat: 34.02, lon: 74.72 },
+      { name: "Srinagar", lat: 34.08, lon: 74.8 },
+      { name: "Kupwara", lat: 34.53, lon: 74.25 },
+      { name: "Bandipore", lat: 34.42, lon: 74.65 },
+    ];
+
+    const apiKey = "8c0bce6dd891cbaec6699edc2da0ed0a"; // Replace with your OpenWeatherMap API key
+    const tickerContent = document.getElementById("weather-ticker-content");
+
+    async function fetchWeather() {
+      for (const district of districts) {
+        const url = `https://api.openweathermap.org/data/2.5/weather?lat=${district.lat}&lon=${district.lon}&appid=${apiKey}&units=metric`;
+        try {
+          const response = await fetch(url);
+          const data = await response.json();
+          addWeatherToTicker(district.name, data);
+        } catch (error) {
+          console.error(`Error fetching weather for ${district.name}:`, error);
+        }
+      }
+    }
+
+    function addWeatherToTicker(name, data) {
+      const weatherItem = document.createElement("div");
+      weatherItem.classList.add("weather-item");
+
+      // Color based on weather condition
+      let weatherColor = "#333"; // default to dark gray
+      if (data.weather[0].main === "Clear") {
+        weatherColor = "#87CEEB"; // Sky Blue for clear weather
+      } else if (data.weather[0].main === "Clouds") {
+        weatherColor = "#B0C4DE"; // Light Gray for cloudy weather
+      } else if (data.weather[0].main === "Rain") {
+        weatherColor = "#4682B4"; // Steel Blue for rainy weather
+      } else if (data.weather[0].main === "Snow") {
+        weatherColor = "#ADD8E6"; // Light Blue for snowy weather
+      }
+
+      // Apply color to weather item
+      weatherItem.style.backgroundColor = weatherColor;
+
+      // Create popup content
+      const popupContent = `
+        <h3>${name} Weather</h3>
+        <p><strong>Temperature:</strong> ${data.main.temp}�C</p>
+        <p><strong>Feels Like:</strong> ${data.main.feels_like}�C</p>
+        <p><strong>Humidity:</strong> ${data.main.humidity}%</p>
+        <p><strong>Wind Speed:</strong> ${data.wind.speed} m/s</p>
+        <p><strong>Condition:</strong> ${data.weather[0].description}</p>
+      `;
+      
+      weatherItem.innerHTML = `
+        <img src="https://openweathermap.org/img/wn/${data.weather[0].icon}.png" alt="${data.weather[0].description}">
+        <div>
+          <strong>${name}</strong>: ${data.main.temp}�C, ${data.weather[0].description}
+        </div>
+        <div class="popup">
+          ${popupContent}
+        </div>
+      `;
+      tickerContent.appendChild(weatherItem);
+    }
+
+    fetchWeather();
+  </script>
+</body>
+</html>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive News Ticker</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+    }
+    .news-ticker {
+      background-color: #333;
+      color: white;
+      padding: 10px 0;
+      overflow: hidden;
+      position: relative;
+    }
+    .news-ticker-content {
+      display: inline-block;
+      white-space: nowrap;
+      animation: scroll 15s linear infinite;
+    }
+    .news-ticker a {
+      color: white;
+      text-decoration: none;
+      margin-right: 50px;
+      display: inline-flex;
+      align-items: center;
+      position: relative;
+    }
+    .news-ticker img {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      margin-right: 10px;
+    }
+    @keyframes scroll {
+      0% {
+        transform: translateX(100%);
+      }
+      100% {
+        transform: translateX(-100%);
+      }
+    }
+    .popup {
+      display: none;
+      position: absolute;
+      background-color: #fff;
+      color: #333;
+      padding: 10px;
+      border-radius: 5px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+      font-size: 14px;
+      text-align: center;
+      z-index: 10;
+    }
+    .news-ticker a:hover .popup {
+      display: block;
+    }
+    .news-ticker-content:hover {
+      animation-play-state: paused;
+    }
+  </style>
+</head>
+<body>
+  <div class="news-ticker">
+    <div class="news-ticker-content">
+      <a href="https://baramulla.nic.in/gallery/gulmarg/" target="_blank">
+        <img src="https://cdn.s3waas.gov.in/s3884d247c6f65a96a7da4d1105d584ddd/uploads/2018/05/2018052288-1024x768.jpg" alt="Gulmarg">
+        Gulmarg
+        <div class="popup">Want to visit this place? Click to see tourist places to visit in this area.</div>
+      </a>
+      <a href="https://anantnag.nic.in/gallery/pahalgam/" target="_blank">
+        <img src="https://cdn.s3waas.gov.in/s330ef30b64204a3088a26bc2e6ecf7602/uploads/2018/11/2018112288.jpg" alt="Pahalgam">
+        Pahalgam
+        <div class="popup">Want to visit this place? Click to see tourist places to visit in this area.</div>
+      </a>
+      <a href="https://kulgam.nic.in/photo-gallery/" target="_blank">
+        <img src="https://cdn.s3waas.gov.in/s3dbe272bab69f8e13f14b405e038deb64/uploads/bfi_thumb/2021041081-p5iccrze77etvtujq1tmclvz9637a7ph2qo29ax5uo.png" alt="Kulgam">
+        Kulgam
+        <div class="popup">Want to visit this place? Click to see tourist places to visit in this area.</div>
+      </a>
+      <a href="https://budgam.nic.in/photo-gallery/" target="_blank">
+        <img src="https://cdn.s3waas.gov.in/s31141938ba2c2b13f5505d7c424ebae5f/uploads/bfi_thumb/2021040768-p5cpy0iv6adsgka0at2bfwas53m54sriwm3ewh2rq8.jpg" alt="Budgam">
+        Budgam
+        <div class="popup">Want to visit this place? Click to see tourist places to visit in this area.</div>
+      </a>
+      <a href="https://srinagar.nic.in/photo-gallery/" target="_blank">
+        <img src="https://cdn.s3waas.gov.in/s3f4b9ec30ad9f68f89b29639786cb62ef/uploads/bfi_thumb/2018112432-olwdmtxdg7agden501q0nhqw8tc3re8q7yi0swo734.jpg" alt="Srinagar">
+        Srinagar
+        <div class="popup">Want to visit this place? Click to see tourist places to visit in this area.</div>
+      </a>
+      <a href="https://kupwara.nic.in/photo-gallery/" target="_blank">
+        <img src="https://cdn.s3waas.gov.in/s302a32ad2669e6fe298e607fe7cc0e1a0/uploads/bfi_thumb/2018112756-olw69y0phyoildekr1rvhu3lqsxdm1nu4w534rf6jk.jpg" alt="Kupwara">
+        Kupwara
+        <div class="popup">Want to visit this place? Click to see tourist places to visit in this area.</div>
+      </a>
+      <a href="https://bandipore.nic.in/tourist-places/" target="_blank">
+        <img src="https://cdn.s3waas.gov.in/s3918317b57931b6b7a7d29490fe5ec9f9/uploads/bfi_thumb/2024053155-qoyfzvikek2weu5yychzey16g1w6zs19jwx1zwqio0.jpg" alt="Bandipore">
+        Bandipore
+        <div class="popup">Want to visit this place? Click to see tourist places to visit in this area.</div>
+      </a>
+    </div>
+  </div>
+</body>
+</html>
+
